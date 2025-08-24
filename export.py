@@ -11,6 +11,14 @@ GAS_URL = os.getenv("GAS_URL")
 SECRET_TOKEN = os.getenv("SECRET_TOKEN")
 ICS_FILE = os.getenv("ICS_FILE")
 
+busy_status = {
+    0: "予定なし",  # olFree
+    1: "仮の予定",  # olTentative
+    2: "予定あり",  # olBusy
+    3: "不在",  # olOutOfOffice
+    4: "他の場所",  # olWorkingElsewhere
+}
+
 
 def send_calendar():
 
@@ -42,7 +50,7 @@ def send_calendar():
             }
         else:
             ev = {
-                "summary": "予定あり",
+                "summary": busy_status[int(item.BusyStatus)],
                 "start": item.Start.replace(tzinfo=tz).strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "end": item.End.replace(tzinfo=tz).strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "isAllDay": item.AllDayEvent,
