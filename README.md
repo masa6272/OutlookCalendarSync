@@ -1,6 +1,13 @@
 # OutlookCalendarSync
 
-## Script Properties on GAS
+## Usage
 
-- CALENDAR_ID
-- SECRET_TOKEN
+Windows PC
+- `export.py`
+- `.env`
+
+GAS
+- `import.js`
+- Script Properties
+  - `CALENDAR_ID`
+  - `SECRET_TOKEN`
