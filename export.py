@@ -1,5 +1,6 @@
 import datetime
 import os
+import sys
 
 import portion as P
 import requests
@@ -29,11 +30,9 @@ busy_status_key = {
 }
 
 
-def send_calendar():
-
-    # 30日前から180日後までの予定を取得
-    start = datetime.datetime.now() - datetime.timedelta(days=30)
-    end = start + datetime.timedelta(days=7) + datetime.timedelta(days=180)
+def send_calendar(mode, past, future):
+    start = datetime.datetime.now() - datetime.timedelta(days=past)
+    end = start + datetime.timedelta(days=past + future)
 
     outlook = win32com.client.Dispatch("Outlook.Application")
     ns = outlook.GetNamespace("MAPI")
@@ -45,33 +44,65 @@ def send_calendar():
         f"[Start] >= '{start.strftime('%m/%d/%Y %H:%M %p')}' AND [End] <= '{end.strftime('%m/%d/%Y %H:%M %p')}'"
     )
     restricted_items = items.Restrict(restriction)
+    print(f"Found {len([0 for _ in restricted_items])} event(s) from {start} to {end}")
 
     # --- JSON 作成 ---
-    events_allday = []
-    events_timed = []
-    for item in restricted_items:
-        tz = datetime.timezone(item.Start - item.StartUTC)
-        if item.AllDayEvent:
-            events_allday.append(
-                {
-                    "summary": item.Subject,
-                    "start": item.Start.replace(tzinfo=tz).strftime("%Y-%m-%d"),
-                    "end": item.End.replace(tzinfo=tz).strftime("%Y-%m-%d"),
-                    "isAllDay": item.AllDayEvent,
-                }
-            )
-        else:
-            events_timed.append(
-                {
-                    "summary": item.Subject,
-                    "start": item.Start.replace(tzinfo=tz).strftime("%Y-%m-%dT%H:%M:%S%z"),
-                    "end": item.End.replace(tzinfo=tz).strftime("%Y-%m-%dT%H:%M:%S%z"),
-                    # "isAllDay": item.AllDayEvent,
-                    "status": int(item.BusyStatus),
-                }
-            )
-    events = events_allday + merge_events(events_timed)
-    print(events)
+    if mode == "timerange":
+        events_allday = []
+        events_timed = []
+        for item in restricted_items:
+            tz = datetime.timezone(item.Start - item.StartUTC)
+            if item.AllDayEvent:
+                events_allday.append(
+                    {
+                        "summary": item.Subject,
+                        "start": item.Start.replace(tzinfo=tz).strftime("%Y-%m-%d"),
+                        "end": item.End.replace(tzinfo=tz).strftime("%Y-%m-%d"),
+                        "isAllDay": item.AllDayEvent,
+                        "id": item.EntryID,
+                    }
+                )
+            else:
+                events_timed.append(
+                    {
+                        "summary": item.Subject,
+                        "start": item.Start.replace(tzinfo=tz).strftime("%Y-%m-%dT%H:%M:%S%z"),
+                        "end": item.End.replace(tzinfo=tz).strftime("%Y-%m-%dT%H:%M:%S%z"),
+                        "isAllDay": item.AllDayEvent,
+                        "id": item.EntryID,
+                        "status": int(item.BusyStatus),
+                    }
+                )
+        events = events_allday + merge_events(events_timed)
+
+    elif mode == "event":
+        events = []
+        for item in restricted_items:
+
+            tz = datetime.timezone(item.Start - item.StartUTC)
+            if item.AllDayEvent:
+                events.append(
+                    {
+                        "summary": item.Subject,
+                        "start": item.Start.replace(tzinfo=tz).strftime("%Y-%m-%d"),
+                        "end": item.End.replace(tzinfo=tz).strftime("%Y-%m-%d"),
+                        "isAllDay": item.AllDayEvent,
+                        "id": item.EntryID,
+                    }
+                )
+
+            else:
+                events.append(
+                    {
+                        "summary": busy_status_label[int(item.BusyStatus)],
+                        "start": item.Start.replace(tzinfo=tz).strftime("%Y-%m-%dT%H:%M:%S%z"),
+                        "end": item.End.replace(tzinfo=tz).strftime("%Y-%m-%dT%H:%M:%S%z"),
+                        "isAllDay": item.AllDayEvent,
+                        "id": item.EntryID,
+                    }
+                )
+
+    print(f"Sending {len(events)} event(s) to GAS")
 
     # ====== POST リクエスト送信 ======
     response = requests.post(
@@ -79,7 +110,7 @@ def send_calendar():
         params={"token": SECRET_TOKEN},  # URLパラメータでトークン送信
         json=events,  # 本文に JSON を送信
     )
-    print(response.status_code, response.text)
+    print(response.text)
 
 
 def merge_events(events):
@@ -87,7 +118,7 @@ def merge_events(events):
     if not events:
         return []
 
-    print(f"original: {events}")
+    # print(f"original: {events}")
 
     timeranges = {
         "free": P.empty(),  # 0 : "空き時間",
@@ -107,22 +138,20 @@ def merge_events(events):
         else:
             timeranges_ooo.append({"summary": event["summary"], "timerange": P.closed(start, end)})
 
-    print(f"timeranges: {timeranges}")
-    print(f"timeranges_ooo: {timeranges_ooo}")
-
     # 重なっている時間帯のうち、優先度の高い予定を抽出
     occupied = P.empty()
     merged_events = []
 
     # 最優先: 不在
     for event in timeranges_ooo:
-        print(f"ooo event: {event}")
+        # print(f"ooo event: {event}")
         merged_events.append(
             {
-                "summary": f"不在: {event['summary']}",
+                "summary": {event["summary"]},
                 "start": event["timerange"].lower.strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "end": event["timerange"].upper.strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "isAllDay": False,
+                "id": event["id"],
             }
         )
         occupied |= event["timerange"]
@@ -138,6 +167,7 @@ def merge_events(events):
                     "start": rng.lower.strftime("%Y-%m-%dT%H:%M:%S%z"),
                     "end": rng.upper.strftime("%Y-%m-%dT%H:%M:%S%z"),
                     "isAllDay": False,
+                    "id": f"{busy_status_key[status]}-{rng.lower.isoformat()}-{rng.upper.isoformat()}",
                 }
             )
         occupied |= timerange
@@ -146,4 +176,8 @@ def merge_events(events):
 
 
 if __name__ == "__main__":
-    send_calendar()
+    args = sys.argv
+    if len(args) > 4:
+        send_calendar(args[1], args[2], args[3])
+    else:
+        send_calendar("timerange", 7, 28)
