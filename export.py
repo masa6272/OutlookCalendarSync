@@ -1,4 +1,5 @@
 import datetime
+import hashlib
 import os
 import sys
 
@@ -41,7 +42,8 @@ def send_calendar(mode, past, future):
     items.Sort("[Start]")
 
     restriction = (
-        f"[Start] >= '{start.strftime('%m/%d/%Y %H:%M %p')}' AND [End] <= '{end.strftime('%m/%d/%Y %H:%M %p')}'"
+        f"([Start] >= '{start.strftime('%m/%d/%Y %H:%M %p')}' AND [Start] <= '{end.strftime('%m/%d/%Y %H:%M %p')}') "
+        f"OR ([End] >= '{start.strftime('%m/%d/%Y %H:%M %p')}' AND [End] <= '{end.strftime('%m/%d/%Y %H:%M %p')}')"
     )
     restricted_items = items.Restrict(restriction)
     print(f"Found {len([0 for _ in restricted_items])} event(s) from {start} to {end}")
@@ -52,24 +54,34 @@ def send_calendar(mode, past, future):
         events_timed = []
         for item in restricted_items:
             tz = datetime.timezone(item.Start - item.StartUTC)
+
+            subject = item.Subject
+            start_d = item.Start.replace(tzinfo=tz).strftime("%Y-%m-%d")
+            start_dt = item.Start.replace(tzinfo=tz).strftime("%Y-%m-%dT%H:%M:%S%z")
+            end_d = item.End.replace(tzinfo=tz).strftime("%Y-%m-%d")
+            end_dt = item.End.replace(tzinfo=tz).strftime("%Y-%m-%dT%H:%M:%S%z")
+            isAllday = item.AllDayEvent
+            uid = hashlib.sha256(str(mode + subject + start_dt + end_dt + str(isAllday)).encode()).hexdigest()
+            busy_status = int(item.BusyStatus)
+
             if item.AllDayEvent:
                 events_allday.append(
                     {
-                        "summary": item.Subject,
-                        "start": item.Start.replace(tzinfo=tz).strftime("%Y-%m-%d"),
-                        "end": item.End.replace(tzinfo=tz).strftime("%Y-%m-%d"),
-                        "isAllDay": item.AllDayEvent,
-                        "id": item.EntryID,
+                        "summary": subject,
+                        "start": start_d,
+                        "end": end_d,
+                        "isAllDay": isAllday,
+                        "id": uid,
                     }
                 )
             else:
                 events_timed.append(
                     {
-                        "summary": item.Subject,
-                        "start": item.Start.replace(tzinfo=tz).strftime("%Y-%m-%dT%H:%M:%S%z"),
-                        "end": item.End.replace(tzinfo=tz).strftime("%Y-%m-%dT%H:%M:%S%z"),
-                        "isAllDay": item.AllDayEvent,
-                        "id": item.EntryID,
+                        "summary": subject,
+                        "start": start_dt,
+                        "end": end_dt,
+                        "isAllDay": isAllday,
+                        "id": uid,
                         "status": int(item.BusyStatus),
                     }
                 )
@@ -80,27 +92,24 @@ def send_calendar(mode, past, future):
         for item in restricted_items:
 
             tz = datetime.timezone(item.Start - item.StartUTC)
-            if item.AllDayEvent:
-                events.append(
-                    {
-                        "summary": item.Subject,
-                        "start": item.Start.replace(tzinfo=tz).strftime("%Y-%m-%d"),
-                        "end": item.End.replace(tzinfo=tz).strftime("%Y-%m-%d"),
-                        "isAllDay": item.AllDayEvent,
-                        "id": item.EntryID,
-                    }
-                )
+            subject = item.Subject
+            start_d = item.Start.replace(tzinfo=tz).strftime("%Y-%m-%d")
+            start_dt = item.Start.replace(tzinfo=tz).strftime("%Y-%m-%dT%H:%M:%S%z")
+            end_d = item.End.replace(tzinfo=tz).strftime("%Y-%m-%d")
+            end_dt = item.End.replace(tzinfo=tz).strftime("%Y-%m-%dT%H:%M:%S%z")
+            isAllday = item.AllDayEvent
+            uid = hashlib.sha256(str(mode + subject + start_dt + end_dt + str(isAllday)).encode()).hexdigest()
+            busy_status = int(item.BusyStatus)
 
-            else:
-                events.append(
-                    {
-                        "summary": busy_status_label[int(item.BusyStatus)],
-                        "start": item.Start.replace(tzinfo=tz).strftime("%Y-%m-%dT%H:%M:%S%z"),
-                        "end": item.End.replace(tzinfo=tz).strftime("%Y-%m-%dT%H:%M:%S%z"),
-                        "isAllDay": item.AllDayEvent,
-                        "id": item.EntryID,
-                    }
-                )
+            events.append(
+                {
+                    "summary": busy_status_label[busy_status],
+                    "start": (start_d if isAllday else start_dt),
+                    "end": (end_d if isAllday else end_dt),
+                    "isAllDay": isAllday,
+                    "id": uid,
+                }
+            )
 
     print(f"Sending {len(events)} event(s) to GAS")
 
@@ -118,56 +127,44 @@ def merge_events(events):
     if not events:
         return []
 
-    # print(f"original: {events}")
-
     timeranges = {
         "free": P.empty(),  # 0 : "空き時間",
         "tentative": P.empty(),  # 1 : "仮の予定",
         "busy": P.empty(),  # 2 : "予定あり",
         "elsewhere": P.empty(),  # 4 : "他の場所",
     }
-    timeranges_ooo = []  # 3 : "不在"
 
+    # 重なっている時間帯のうち、優先度の高い予定を抽出
+    occupied = P.empty()
+    merged_events = []
     for event in events:
         start = datetime.datetime.fromisoformat(event["start"])
         end = datetime.datetime.fromisoformat(event["end"])
         status = event["status"]
 
-        if status != 3:
-            timeranges[busy_status_key[status]] |= P.closed(start, end)
+        if status == 3:
+            # 最優先: 不在
+            merged_events.append(event)
+            occupied |= P.closed(start, end)
         else:
-            timeranges_ooo.append({"summary": event["summary"], "timerange": P.closed(start, end), "id": event["id"]})
-
-    # 重なっている時間帯のうち、優先度の高い予定を抽出
-    occupied = P.empty()
-    merged_events = []
-
-    # 最優先: 不在
-    for event in timeranges_ooo:
-        # print(f"ooo event: {event}")
-        merged_events.append(
-            {
-                "summary": event["summary"],
-                "start": event["timerange"].lower.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                "end": event["timerange"].upper.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                "isAllDay": False,
-                "id": event["id"],
-            }
-        )
-        occupied |= event["timerange"]
+            timeranges[busy_status_key[status]] |= P.closed(start, end)
 
     # 次優先: 予定あり、仮の予定、他の場所、空き時間
     for status in [2, 1, 4, 0]:
         timerange = timeranges[busy_status_key[status]] - occupied
 
         for rng in timerange:
+            start = rng.lower.strftime("%Y-%m-%dT%H:%M:%S%z")
+            end = rng.upper.strftime("%Y-%m-%dT%H:%M:%S%z")
+            uid = hashlib.sha256((str(busy_status_key[status]) + start + end).encode()).hexdigest()
+
             merged_events.append(
                 {
                     "summary": busy_status_label[status],
-                    "start": rng.lower.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                    "end": rng.upper.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                    "start": start,
+                    "end": end,
                     "isAllDay": False,
-                    "id": f"{busy_status_key[status]}-{rng.lower.isoformat()}-{rng.upper.isoformat()}",
+                    "id": uid,
                 }
             )
         occupied |= timerange

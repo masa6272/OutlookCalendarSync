@@ -14,6 +14,8 @@ function formatDate(date, format) {
 
 // === Webhook 本体 ===
 function doPost(e) {
+  let log = "";
+
   try {
     // --- スクリプトプロパティから秘密情報取得 ---
     const props = PropertiesService.getScriptProperties();
@@ -27,8 +29,7 @@ function doPost(e) {
         ContentService.MimeType.TEXT
       );
     }
-
-    log = "Start\n";
+    log += "Start\n";
 
     // --- Google カレンダー取得 ---
     const cal = CalendarApp.getCalendarById(CALENDAR_ID);
@@ -79,35 +80,9 @@ function doPost(e) {
         }
         newEv.setTag("outlookId", ev.id);
         added++;
-      } else {
-        // 更新（タイトルや時間が違う場合のみ）
-        if (ev.isAllDay) {
-          if (
-            existing.getTitle() !== ev.summary ||
-            formatDate(existing.getAllDayStartDate(), "yyyy-mm-dd") !==
-              ev.start ||
-            formatDate(existing.getAllDayEndDate(), "yyyy-mm-dd") !== ev.end
-          ) {
-            existing.setTitle(ev.summary);
-            existing.setAllDayDates(new Date(ev.start), new Date(ev.end));
-            updated++;
-          }
-        } else {
-          if (
-            existing.getTitle() !== ev.summary ||
-            existing.getStartTime().getTime() !==
-              new Date(ev.start).getTime() ||
-            existing.getEndTime().getTime() !== new Date(ev.end).getTime()
-          ) {
-            existing.setTitle(ev.summary);
-            existing.setTime(new Date(ev.start), new Date(ev.end));
-            updated++;
-          }
-        }
       }
     });
     log += `Added: ${added} event(s)\n`;
-    log += `Updated: ${updated} event(s)\n`;
 
     // 削除（Googleカレンダーにあるが、受信データにないID）
     deleted = 0;
