@@ -136,7 +136,7 @@ def merge_events(events):
         if status != 3:
             timeranges[busy_status_key[status]] |= P.closed(start, end)
         else:
-            timeranges_ooo.append({"summary": event["summary"], "timerange": P.closed(start, end)})
+            timeranges_ooo.append({"summary": event["summary"], "timerange": P.closed(start, end), "id": event["id"]})
 
     # 重なっている時間帯のうち、優先度の高い予定を抽出
     occupied = P.empty()
@@ -147,7 +147,7 @@ def merge_events(events):
         # print(f"ooo event: {event}")
         merged_events.append(
             {
-                "summary": {event["summary"]},
+                "summary": event["summary"],
                 "start": event["timerange"].lower.strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "end": event["timerange"].upper.strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "isAllDay": False,
