@@ -1,3 +1,17 @@
+function formatDate(date, format) {
+  if (format == "yyyy-mm-dd") {
+    return (
+      date.getFullYear() +
+      "-" +
+      ("0" + (date.getMonth() + 1)).slice(-2) +
+      "-" +
+      ("0" + date.getDate()).slice(-2)
+    );
+  } else {
+    return "";
+  }
+}
+
 // === Webhook 本体 ===
 function doPost(e) {
   try {
@@ -67,14 +81,28 @@ function doPost(e) {
         added++;
       } else {
         // 更新（タイトルや時間が違う場合のみ）
-        if (
-          existing.getTitle() !== ev.summary ||
-          existing.getStartTime().getTime() !== new Date(ev.start).getTime() ||
-          existing.getEndTime().getTime() !== new Date(ev.end).getTime()
-        ) {
-          existing.setTitle(ev.summary);
-          existing.setTime(new Date(ev.start), new Date(ev.end));
-          updated++;
+        if (ev.isAllDay) {
+          if (
+            existing.getTitle() !== ev.summary ||
+            formatDate(existing.getAllDayStartDate(), "yyyy-mm-dd") !==
+              ev.start ||
+            formatDate(existing.getAllDayEndDate(), "yyyy-mm-dd") !== ev.end
+          ) {
+            existing.setTitle(ev.summary);
+            existing.setAllDayDates(new Date(ev.start), new Date(ev.end));
+            updated++;
+          }
+        } else {
+          if (
+            existing.getTitle() !== ev.summary ||
+            existing.getStartTime().getTime() !==
+              new Date(ev.start).getTime() ||
+            existing.getEndTime().getTime() !== new Date(ev.end).getTime()
+          ) {
+            existing.setTitle(ev.summary);
+            existing.setTime(new Date(ev.start), new Date(ev.end));
+            updated++;
+          }
         }
       }
     });

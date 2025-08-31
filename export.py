@@ -177,7 +177,7 @@ def merge_events(events):
 
 if __name__ == "__main__":
     args = sys.argv
-    if len(args) > 4:
-        send_calendar(args[1], args[2], args[3])
+    if len(args) > 3:
+        send_calendar(args[1], int(args[2]), int(args[3]))
     else:
         send_calendar("timerange", 7, 28)
