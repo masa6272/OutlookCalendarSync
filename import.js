@@ -1,5 +1,21 @@
+function formatDate(date, format) {
+  if (format == "yyyy-mm-dd") {
+    return (
+      date.getFullYear() +
+      "-" +
+      ("0" + (date.getMonth() + 1)).slice(-2) +
+      "-" +
+      ("0" + date.getDate()).slice(-2)
+    );
+  } else {
+    return "";
+  }
+}
+
 // === Webhook 本体 ===
 function doPost(e) {
+  let log = "";
+
   try {
     // --- スクリプトプロパティから秘密情報取得 ---
     const props = PropertiesService.getScriptProperties();
@@ -13,35 +29,78 @@ function doPost(e) {
         ContentService.MimeType.TEXT
       );
     }
-
-    // JSON パース
-    const events = JSON.parse(e.postData.contents);
+    log += "Start\n";
 
     // --- Google カレンダー取得 ---
     const cal = CalendarApp.getCalendarById(CALENDAR_ID);
 
-    // --- 既存イベントを全削除 ---
-    const allEvents = cal.getEvents(
+    // 既存イベントをIDでマッピング
+    const existingEvents = cal.getEvents(
       new Date("2000-01-01"),
       new Date("2100-01-01")
     );
-    allEvents.forEach((ev) => ev.deleteEvent());
 
-    // 登録
-    events.forEach((ev) => {
-      if (ev.isAllDay) {
-        cal.createAllDayEvent(ev.summary, new Date(ev.start), new Date(ev.end));
-      } else {
-        cal.createEvent(ev.summary, new Date(ev.start), new Date(ev.end), {});
+    const existingMap = {};
+    existingEvents.forEach((ev) => {
+      const id = ev.getTag("outlookId") || ""; // カスタムタグでIDを保持、なければ空文字列
+      if (id) existingMap[id] = ev;
+      else ev.deleteEvent(); // タグがないイベントは削除
+    });
+    log += `Existing: ${Object.keys(existingMap).length} event(s)\n`;
+
+    // JSON パース
+    const incomingEvents = JSON.parse(e.postData.contents);
+    // 受信イベントをIDでマッピング
+    const incomingMap = {};
+    incomingEvents.forEach((ev) => (incomingMap[ev.id] = ev));
+
+    log += `Incoming: ${Object.keys(incomingMap).length} event(s)\n`;
+
+    // 追加・更新
+    updated = 0;
+    added = 0;
+    incomingEvents.forEach((ev) => {
+      const existing = existingMap[ev.id];
+
+      if (!existing) {
+        // 新規作成
+        let newEv;
+        if (ev.isAllDay) {
+          newEv = cal.createAllDayEvent(
+            ev.summary,
+            new Date(ev.start),
+            new Date(ev.end)
+          );
+        } else {
+          newEv = cal.createEvent(
+            ev.summary,
+            new Date(ev.start),
+            new Date(ev.end)
+          );
+        }
+        newEv.setTag("outlookId", ev.id);
+        added++;
       }
     });
+    log += `Added: ${added} event(s)\n`;
 
-    return ContentService.createTextOutput("OK").setMimeType(
+    // 削除（Googleカレンダーにあるが、受信データにないID）
+    deleted = 0;
+    Object.keys(existingMap).forEach((id) => {
+      if (!incomingMap[id]) {
+        existingMap[id].deleteEvent();
+        deleted++;
+      }
+    });
+    log += `Deleted: ${deleted} event(s)\n`;
+
+    log += "End\n";
+    return ContentService.createTextOutput(log).setMimeType(
       ContentService.MimeType.TEXT
     );
   } catch (err) {
-    return ContentService.createTextOutput("Error: " + err.message).setMimeType(
-      ContentService.MimeType.TEXT
-    );
+    return ContentService.createTextOutput(
+      "Error: " + err.message + "\n" + log
+    ).setMimeType(ContentService.MimeType.TEXT);
   }
 }
