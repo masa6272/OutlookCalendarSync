@@ -1,0 +1,12 @@
+[project]
+name = "outlookcalendarsync"
+version = "0.1.0"
+description = "Sync Outlook Calendar to Google Calendar"
+readme = "README.md"
+requires-python = "==3.12.*"
+dependencies = [
+    "python-dotenv>=1.1.1",
+    "portion>=2.6.1",
+    "pywin32>=311",
+    "requests>=2.32.5",
+]
