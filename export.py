@@ -2,6 +2,7 @@ import datetime
 import hashlib
 import os
 import sys
+from zoneinfo import ZoneInfo
 
 import portion as P
 import requests
@@ -32,8 +33,12 @@ busy_status_key = {
 
 
 def send_calendar(mode, past, future):
-    start = datetime.datetime.now() - datetime.timedelta(days=past)
-    end = start + datetime.timedelta(days=past + future)
+    # 当日 00:00 (JST) を基準に、過去 past 日と未来 future 日の予定を取得
+    today = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=9))).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    start = today - datetime.timedelta(days=past)
+    end = today + datetime.timedelta(days=future)
 
     outlook = win32com.client.Dispatch("Outlook.Application")
     ns = outlook.GetNamespace("MAPI")
