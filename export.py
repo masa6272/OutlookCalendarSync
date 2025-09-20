@@ -2,6 +2,7 @@ import datetime
 import hashlib
 import os
 import sys
+from zoneinfo import ZoneInfo
 
 import portion as P
 import requests
@@ -32,8 +33,12 @@ busy_status_key = {
 
 
 def send_calendar(mode, past, future):
-    start = datetime.datetime.now() - datetime.timedelta(days=past)
-    end = start + datetime.timedelta(days=past + future)
+    # 当日 00:00 (JST) を基準に、過去 past 日と未来 future 日の予定を取得
+    today = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=9))).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    start = today - datetime.timedelta(days=past)
+    end = today + datetime.timedelta(days=future)
 
     outlook = win32com.client.Dispatch("Outlook.Application")
     ns = outlook.GetNamespace("MAPI")
@@ -48,8 +53,9 @@ def send_calendar(mode, past, future):
     restricted_items = items.Restrict(restriction)
     print(f"Found {len([0 for _ in restricted_items])} event(s) from {start} to {end}")
 
+    print(f"Mode: {mode}")
     # --- JSON 作成 ---
-    if mode == "timerange":
+    if mode == "busystatus" or mode == "workinghours":
         events_allday = []
         events_timed = []
         for item in restricted_items:
@@ -85,7 +91,10 @@ def send_calendar(mode, past, future):
                         "status": int(item.BusyStatus),
                     }
                 )
-        events = events_allday + merge_events(events_timed)
+        if mode == "busystatus":
+            events = events_allday + merge_events(events_timed)
+        elif mode == "workinghours":
+            events = events_allday + get_working_hours(events_timed)
 
     elif mode == "event":
         events = []
@@ -172,9 +181,63 @@ def merge_events(events):
     return merged_events
 
 
+def get_working_hours(events):
+    """勤務予定の開始・終了時刻を1日毎にマージする"""
+    if not events:
+        return []
+
+    timerange_event = P.empty()  # 予定
+    timerange_working = P.empty()  # 勤務時間
+
+    # 重なっている時間帯のうち、優先度の高い予定を抽出
+    occupied = P.empty()
+    merged_events = []
+    for event in events:
+        status = event["status"]
+
+        if status == 3:
+            # 最優先: 不在
+            merged_events.append(event)
+            occupied |= P.closed(
+                datetime.datetime.fromisoformat(event["start"]), datetime.datetime.fromisoformat(event["end"])
+            )
+        elif status in [1, 2, 4]:
+            # 次優先: 予定あり、仮の予定、他の場所
+            timerange_event |= P.closed(
+                datetime.datetime.fromisoformat(event["start"]), datetime.datetime.fromisoformat(event["end"])
+            )
+        else:
+            # 無視: 空き時間
+            pass
+
+    for i in range(len(timerange_event) - 1):
+        # 間を埋める
+        if timerange_event[i].upper.date() == timerange_event[i + 1].lower.date():
+            timerange_working |= P.closed(timerange_event[i].lower, timerange_event[i + 1].upper)
+
+    timerange_working -= occupied
+
+    for rng in timerange_working:
+        start = rng.lower.strftime("%Y-%m-%dT%H:%M:%S%z")
+        end = rng.upper.strftime("%Y-%m-%dT%H:%M:%S%z")
+        uid = hashlib.sha256(("working" + start + end).encode()).hexdigest()
+
+        merged_events.append(
+            {
+                "summary": "勤務",
+                "start": start,
+                "end": end,
+                "isAllDay": False,
+                "id": uid,
+            }
+        )
+
+    return merged_events
+
+
 if __name__ == "__main__":
     args = sys.argv
     if len(args) > 3:
         send_calendar(args[1], int(args[2]), int(args[3]))
     else:
-        send_calendar("timerange", 7, 28)
+        send_calendar("workinghours", 7, 28)
