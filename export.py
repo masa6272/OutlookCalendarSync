@@ -2,7 +2,6 @@ import datetime
 import hashlib
 import os
 import sys
-from zoneinfo import ZoneInfo
 
 import portion as P
 import requests
@@ -224,7 +223,7 @@ def get_working_hours(events):
 
         merged_events.append(
             {
-                "summary": "勤務",
+                "summary": "勤務時間",
                 "start": start,
                 "end": end,
                 "isAllDay": False,
