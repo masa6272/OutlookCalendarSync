@@ -30,6 +30,9 @@ busy_status_key = {
     4: "elsewhere",  # olWorkingElsewhere
 }
 
+ignored_subjects = []
+ignored_labels = []
+
 
 def send_calendar(mode, past, future):
     # 当日 00:00 (JST) を基準に、過去 past 日と未来 future 日の予定を取得
@@ -68,6 +71,9 @@ def send_calendar(mode, past, future):
             isAllday = item.AllDayEvent
             uid = hashlib.sha256(str(mode + subject + start_dt + end_dt + str(isAllday)).encode()).hexdigest()
             busy_status = int(item.BusyStatus)
+
+            if subject in ignored_subjects:
+                continue
 
             if item.AllDayEvent:
                 events_allday.append(
